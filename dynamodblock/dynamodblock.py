@@ -22,7 +22,7 @@ Author.: Ricardo Abuchaim - ricardoabuchaim@gmail.com
 Github.: http://github.com/rabuchaim/dynamodblock
 Issues.: https://github.com/rabuchaim/dynamodblock/issues
 PyPI...: https://pypi.org/project/dynamodblock/  ( pip install dynamodblock )
-Version: 1.0.1 - Release Date: 11/May/2025
+Version: 1.0.2 - Release Date: 11/May/2025
 License: MIT
 
 """
@@ -37,7 +37,7 @@ from boto3.dynamodb.table import TableResource as DynamoDBTableResource
 from botocore.client import BaseClient
 
 __appname__ = "DynamoDB Lock for Lambdas" 
-__version__ = "1.0.1"
+__version__ = "1.0.2"
 __release__ = "11/May/2025"
 
 __all__ = ['DynamoDBLock','create_dynamodb_table',
@@ -294,7 +294,7 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
         """Context manager to release the lock."""
         self.release()
     
-    def get_owner_id(self):
+    def get_owner_id(self)->str:
         """Return the owner_id of the lock."""
         return self.__owner_id
 
@@ -310,10 +310,10 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
     @abstractmethod
     def _release(self)->None:
         raise NotImplementedError
-   
+
     def release(self,force:bool=False, raise_on_exception:bool=False)->bool:
         return self.__delete_lock(force=force, raise_on_exception=raise_on_exception) 
-        
+
     def acquire(self, force:bool=False, lock_ttl:int|None=None, retry_timeout:int|None=None, retry_interval:float|None=None)->DynamoDBLockAcquireReturnProxy:
         """Acquire the lock. If the lock is already acquired by another process, it will wait until the lock is released or the retry_timeout is reached.
         
@@ -360,7 +360,7 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
                                                                  "owner_id": self.get_owner_id()}, 
                                                            ConditionExpression=Or(Attr("lock_id").not_exists(),Attr("ttl").lt(int(time.time()))))
                 if result := (response.get("ResponseMetadata",{}).get("HTTPStatusCode",0) == 200):
-                    self.logDebug(f"Lock '{self.lock_id}' successfully acquired {'by force ' if force else ' '}{elapsed.text()}")
+                    self.logDebug(f"Lock '{self.lock_id}' successfully acquired {'by force ' if force else ''}{elapsed.text()}")
                 return result
         except Exception as ERR:
             raise DynamoDBLockPutLockException(str(ERR)) from None
@@ -417,7 +417,7 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
                                 # yes, this lock belongs to me, so I will delete it
                                 response = self.ddb_table.delete_item(Key={"lock_id": self.lock_id},ConditionExpression=Attr("lock_id").eq(self.lock_id))
                             else:
-                                self.logDebug(f"The current lock does not belong to my session... lock release aborted ({info})")
+                                self.logDebug(f"The current lock does not belong to this session... lock release aborted ({info})")
                         if response.get("ResponseMetadata",{}).get("HTTPStatusCode",0) == 200:
                             self.__should_delete_lock = False
                             self.logDebug(f"Lock '{self.lock_id}' successfully released{' by force' if force else ''} {elapsed.text()}")
