@@ -83,7 +83,6 @@ finally:
     my_lock.release()
 ```
 An example of a lambda function code for testing
-
 ```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
@@ -112,6 +111,14 @@ def lambda_handler(event, context):
         time.sleep(5)
     log.info(f"ALL DONE!") 
 ```
+Use this structure in your lambda function code. You can run `pip install dynamodblock -t ./` to install the library in your current directory.
+```.
+├── dynamodblock
+│   ├── __init__.py
+│   └── dynamodblock.py
+└── lambda_function.py
+```
+
 And below is a screenshot of CloudWatch logs from two concurrent executions (using the code above) 2 seconds apart
 
 <img src="https://raw.githubusercontent.com/rabuchaim/dynamodblock/refs/heads/main/dynamodblock_04.png" />
@@ -245,7 +252,7 @@ The library defines specific exceptions:
 
 ## `create_dynamodb_table`
 
-Creates a DynamoDB table intended to store locks, with flexible customization options. **This function does not handle credentials or access keys, you need to provide an already instantiated boto3.client with your credentials data OR a generic boto3.client will be created using the default boto3 session**.
+Creates a DynamoDB table intended to store locks, with flexible customization options. **This function does not handle credentials or access keys, you need to provide an already instantiated boto3.client with your credentials data.**.
 
 This function simplifies the creation of a DynamoDB table by predefining key parameters, but also supports several
 optional configurations via keyword arguments. The default behavior is to create a table with:
@@ -299,10 +306,12 @@ Raises:
 Example:
 
 ```python
+    >>> import boto3
     >>> from dynamodblock import create_dynamodb_table
+    >>> your_previously_created_client = boto3.client('dynamodb',region_name='us-east-1',YOUR_CREDENTIALS...)
     >>> create_dynamodb_table(
     ...     table_name="my_lock_table",
-    ...     boto3_client=my_previously_created_client,
+    ...     boto3_client=your_previously_created_client,
     ...     billing_mode="PROVISIONED",
     ...     read_capacity_units=5,
     ...     write_capacity_units=5,
