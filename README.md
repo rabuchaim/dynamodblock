@@ -84,7 +84,90 @@ finally:
 ```
 ---
 
-## 🔒 How It Works
+## 📑 Other methods
+
+```def get_lock_info(self)->namedtuple```
+    Return a namedtuple LockInfo with the lock information.
+
+```python
+>>> my_lock_info = lock.get_lock_info()
+>>> print(my_lock_info) 
+>>> LockInfo(lock_id='mylock1', lock_region='us-east-1', ttl=1746956664, expire_datetime=datetime.datetime(2025, 5, 11, 4, 44, 24), expire_datestring='2025-05-11 04:44:24 -05', owner_id='88d6235e', return_code=200, return_message='OK', elapsed_time=0.144738)`
+>>> print(my_lock_info.lock_id) 
+>>> 'mylock1'
+>>> print(my_lock_info.owner_id) 
+>>> '88d6235e'
+```
+
+```def is_locked(self)->bool:```
+    Is a PROPERTY. Return True if the lock is acquired by another process.
+
+```python
+>>> print(lock.is_locked) 
+>>> True
+```
+
+```def get_owner_id(self)->str:```
+    Return the owner_id of the lock.
+
+```python
+>>> print(lock.get_owner_id()) 
+>>> '88d6235e'
+```
+
+```def get_current_timezone(self)->str:```
+    Return the current timezone string of the DynamoDBLock object.
+
+```python
+>>> print(lock.get_current_timezone())
+>>> 'America/Sao_Paulo'
+```
+
+```def set_timezone(self,timezone:str)->bool:```
+    Set the timezone for the lock mechanism. The timezone is used to calculate the expiration time of the lock. This method is called by the `__init__()`. It will only display messages if the debug parameter was enabled when creating the object.
+
+```python
+>>> print(lock.set_timezone('America/Rio_Branco'))
+25/05/11 04:44:19.983 [DEBUG] Time zone adjusted to 'America/Rio_Branco' (was 'UTC'). Now is 2025-05-11 04:44:19 -05 [0.000057 sec].
+>>> True
+```
+
+```def warmup(self)->bool:```
+    Warm up the lock table to check if it is available and working. This method is called by the `__init__()` method and should return True or can be disabled by setting the 'warmup' parameter to False when creating the object. It will only display messages if the verbose and/or debug parameters were enabled when creating the object.
+
+```python
+>>> print(lock.warmup()) 
+25/05/11 04:44:20.495 [DEBUG] Warm-Up put_item 'warmup_lock_d1b06a37-0503-4c99-a095-48f3563bed25' (ttl 1746956661) on table 'ddblock' in 0.512620 sec.
+25/05/11 04:44:20.645 [DEBUG] Warm-Up query on table 'ddblock' in 0.150209 sec.
+25/05/11 04:44:20.799 [DEBUG] Warm-Up delete_item on table 'ddblock' in 0.153090 sec.
+25/05/11 04:44:20.799 [INFO] Warm-Up finished in 0.512717 sec.
+>>> True
+```
+
+```def acquire(self, force:bool=False, lock_ttl:int|None=None, retry_timeout:int|None=None, retry_interval:float|None=None)->DynamoDBLockAcquireReturnProxy:```
+    Acquire the lock. If the lock is already acquired by another process, it will wait until the lock is released or the retry_timeout is reached. Use the 'force' parameter to acquire the lock by force, ignoring if the lock is already acquired by another process. By calling this method, you can also change the parameters provided during creation, such as lock_ttl, retry_timeout and retry_interval.
+
+```python
+>>> lock.acquire(force=True) 
+25/05/11 04:44:21.113 [DEBUG] Lock 'mylock1' successfully acquired by force [0.165980 sec]
+```
+
+```def release(self,force:bool=False, raise_on_exception:bool=False)->bool:```
+    Releases the lock and returns True if it was successfully completed. The lock is only released if the DynamoDB record actually belongs to this session, i.e., the lock_id, lock_region, owner_id and ttl must be equal to the values ​​that are configured in the object's memory, otherwise the lock will not be released. If you use the `force=True` parameter, it unconditionally deletes the DynamoDB lock (use with caution).
+
+```python
+>>> lock.release() 
+25/05/11 04:44:21.113 [DEBUG] The current lock 'mylock1' does not belong to this session... lock release aborted [0.165980 sec]
+>>> False
+>>> lock.release(force=True) 
+25/05/11 04:44:21.113 [DEBUG] Lock 'mylock1' successfully released by force [0.165980 sec]
+>>> True
+```
+
+
+---
+
+## 🛠️ How It Works
 
 1. When a Lambda function attempts to acquire the lock, it inserts an item in the table with a TTL (`time-to-live`).
 2. If another process already holds the lock and it hasn't expired, the new attempt is delayed.
@@ -123,7 +206,7 @@ The library defines specific exceptions:
 
 ---
 
-## 🔎 Included Utilities
+## 🛠️ Included Utilities
 
 ## `create_dynamodb_table`
 
