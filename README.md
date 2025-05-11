@@ -82,6 +82,40 @@ try:
 finally:
     my_lock.release()
 ```
+An example of a lambda function code for testing
+
+```python
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+import os, warnings
+os.environ['PYTHONWARNINGS'] = "ignore"
+warnings.simplefilter("ignore")
+
+import boto3, time
+from dynamodblock import DynamoDBLock
+
+class lambda_log:
+    def __init__(self,prefix:str):
+        self.prefix = prefix 
+    def info(self,msg):
+        print(f"[{self.prefix}] {str(msg)}",flush=True)
+        
+def lambda_handler(event, context):
+    log = lambda_log(context.aws_request_id[:8])
+    ddb_table = boto3.resource('dynamodb').Table('ddblock')
+    
+    lock = DynamoDBLock(lock_id='mylock',dynamodb_table_resource=ddb_table,owner_id=context.aws_request_id[:8],lock_ttl=20,warmup=True,
+                        verbose=True,debug=True,log_common_prefix=context.aws_request_id[:8],timezone="America/Sao_Paulo")
+    
+    with lock.acquire():
+        log.info(f"Sleeping for 5 seconds")
+        time.sleep(5)
+    log.info(f"ALL DONE!") 
+```
+And below is a screenshot of CloudWatch logs from two concurrent executions (using the code above) 2 seconds apart
+
+<img src="https://raw.githubusercontent.com/rabuchaim/dynamodblock/refs/heads/main/dynamodblock_04.png" />
+
 ---
 
 ## 📑 Other methods
@@ -189,6 +223,7 @@ finally:
 | `timezone`                | `str`         | Timezone, e.g. `UTC`, `America/Sao_Paulo`        |
 | `verbose`                 | `bool`        | Enable logs                                      |
 | `debug`                   | `bool`        | Enable debug logs                                |
+| `log_common_prefix`       | `str`         | A text to be used as prefix in verbose or debug  |
 
 ---
 
