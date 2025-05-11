@@ -225,7 +225,7 @@ specified region.
 
 This function does not support the creation of local or global secondary indexes.
 
-```create_dynamodb_table(table_name:str,boto3_client:BaseClient,verbose:bool=True,raise_on_exception:bool=False,**kwargs)->bool:```
+```create_dynamodb_table(table_name:str, boto3_client:BaseClient, verbose:bool=True, raise_on_exception:bool=False, **kwargs)->bool:```
 
 Parameters:
 ```
