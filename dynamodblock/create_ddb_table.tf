@@ -61,7 +61,7 @@ resource "aws_dynamodb_table" "locktable" {
 
     attribute {
         name = "lock_id"
-        type = "S"
+        type = "S" 
     }
 
     ttl {
