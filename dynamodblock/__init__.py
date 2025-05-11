@@ -19,7 +19,7 @@ Author.: Ricardo Abuchaim - ricardoabuchaim@gmail.com
 Github.: http://github.com/rabuchaim/dynamodblock
 Issues.: https://github.com/rabuchaim/dynamodblock/issues
 PyPI...: https://pypi.org/project/dynamodblock/  ( pip install dynamodblock )
-Version: 1.0.2 - Release Date: 11/May/2025
+Version: 1.0.3 - Release Date: 11/May/2025
 License: MIT
 
 """

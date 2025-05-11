@@ -22,11 +22,11 @@ Author.: Ricardo Abuchaim - ricardoabuchaim@gmail.com
 Github.: http://github.com/rabuchaim/dynamodblock
 Issues.: https://github.com/rabuchaim/dynamodblock/issues
 PyPI...: https://pypi.org/project/dynamodblock/  ( pip install dynamodblock )
-Version: 1.0.2 - Release Date: 11/May/2025
+Version: 1.0.3 - Release Date: 11/May/2025
 License: MIT
 
 """
-import os, boto3, time, contextlib, datetime, multiprocessing, math, json, functools
+import os, time, contextlib, datetime, multiprocessing, math, json, functools, re
 from uuid import uuid4
 from collections import namedtuple
 from abc import ABC, abstractmethod
@@ -37,7 +37,7 @@ from boto3.dynamodb.table import TableResource as DynamoDBTableResource
 from botocore.client import BaseClient
 
 __appname__ = "DynamoDB Lock for Lambdas" 
-__version__ = "1.0.2"
+__version__ = "1.0.3"
 __release__ = "11/May/2025"
 
 __all__ = ['DynamoDBLock','create_dynamodb_table',
@@ -127,18 +127,20 @@ class DynamoDBLockLogging():
                 return myLoggingClass(verbose=self.__verbose,debug=self.__debug)
                 
     """
-    def __init__(self,verbose:bool=False,debug:bool=False,info_prefix="[INFO] ",debug_prefix="[DEBUG] ",with_date:bool=True)->None:
+    def __init__(self,verbose:bool=False,debug:bool=False,common_prefix:str="",info_prefix:str="[INFO] ",debug_prefix:str="[DEBUG] ",with_date:bool=True)->None:
         self.__debug = debug
         self.__verbose = verbose
         self.info_prefix = info_prefix
         self.debug_prefix = debug_prefix
+        self.common_prefix = common_prefix
+        self.common_prefix = f"[{self.common_prefix}] " if (not self.common_prefix.startswith('[') and not self.common_prefix.endswith(']')) else self.common_prefix
         self.__with_date = with_date
         self.info = self.__logEmpty if not self.__verbose else self.info
         self.debug = self.__logEmpty if not self.__debug else self.debug
     def info(self,msg,prefix:str=None)->None:
-        print(f"{self.__get_date()}{prefix if prefix is not None else self.info_prefix}{msg}",flush=True)
+        print(f"{self.common_prefix}{self.__get_date()}{prefix if prefix is not None else self.info_prefix}{msg}",flush=True)
     def debug(self,msg,prefix:str=None)->None:
-        print(f"{self.__get_date()}{prefix if prefix is not None else self.debug_prefix}{msg}",flush=True)
+        print(f"{self.common_prefix}{self.__get_date()}{prefix if prefix is not None else self.debug_prefix}{msg}",flush=True)
     def __logEmpty(self,msg,prefix:str="")->None:...
     def __get_date(self):
         if not self.__with_date: return ''
@@ -160,6 +162,7 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
                  timezone:str=None,                             # specific timezone for ttl/datetime manipulations. Default is the environment variable TZ
                  verbose:bool=False,                            # print messages
                  debug:bool=False,                              # print debug messages
+                 log_common_prefix:str=None                     # a text prefix to appear in the cloudwatch logs to identify each execution when using verbose or debug modes. Sugestion: context.aws_request_id[:8]
                  )->None:
 
         if not isinstance(dynamodb_table_resource,DynamoDBTableResource):
@@ -173,7 +176,7 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
 
         self.__debug = debug
         self.__verbose = verbose
-        self.__classLogging = self.__get_logger(self.__verbose,self.__debug)
+        self.__classLogging = self.__get_logger(self.__verbose,self.__debug,log_common_prefix)
         self.logDebug = self.__classLogging.debug
         self.logInfo = self.__classLogging.info
 
@@ -193,7 +196,7 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
             raise ValueError("retry_interval must be less or equal than retry_timeout") from None
 
         with ElapsedTimer() as elapsed_initial:
-            self.logInfo(f"Initializing {self.__class__.__name__}...    ")
+            self.logInfo(f"Initializing {self.__class__.__name__}...")
             ##──── call set_timezone() only if the given timezone is different from the environment variable TZ ──────────────────────────────
             self.__current_timezone = os.getenv("TZ",None)
             if (timezone is not None) and (timezone != self.__current_timezone): 
@@ -216,18 +219,18 @@ class DynamoDBLockBaseForDynamoDB(ABC, contextlib.ContextDecorator):
             self.logInfo(f"Initialized {self.__class__.__name__}: lock_id='{self.lock_id}' ddb_table='{self.ddb_table}' owner_id='{self.get_owner_id()}' "
                         f"ttl={self.lock_ttl} retry_timeout={self.retry_timeout} retry_interval={self.retry_interval} {elapsed_initial.text()}")
         
-    def __get_logger(self,verbose,debug)->DynamoDBLockLogging:
+    def __get_logger(self,verbose:bool,debug:bool,log_common_prefix:str)->DynamoDBLockLogging:
         """You can customize the logging mechanism by creating a new class with the same methods and attributes."""
-        return DynamoDBLockLogging(verbose=verbose,debug=debug)
+        return DynamoDBLockLogging(verbose=verbose,debug=debug,common_prefix=log_common_prefix)
 
     def __test_ddb_access(self)->None:
         with ElapsedTimer() as elapsed:
             try:
                 self.ddb_table.load()
-                self.logDebug(f"Access to table '{self.ddb_table.name}' is OK! {elapsed.text()}.")
+                self.logDebug(f"Access to table '{self.ddb_table.name}' in region '{self.__lock_region}' is OK! {elapsed.text()}.")
                 return True
             except Exception as ERR:
-                self.logDebug(f"Failed to access to table '{self.ddb_table.name}' {str(ERR)} {elapsed.text()}.")
+                self.logDebug(f"Failed to access to table '{self.ddb_table.name}' in region '{self.__lock_region}' {str(ERR)} {elapsed.text()}.")
                 raise DynamoDBLockException(str(ERR)) from None
 
     def set_timezone(self,timezone:str)->bool:
@@ -456,7 +459,7 @@ class DynamoDBLock(DynamoDBLockBaseForDynamoDB):
         
         owner_id (str, optional): 
             Optional identifier for the lock owner, useful for debugging or when using contextual info
-            such as `context.aws_request_id`.
+            such as `context.aws_request_id[:8]`.
         
         warmup (bool, default=False): 
             If True, performs a warmup operation on the DynamoDB table during initialization.
@@ -470,6 +473,9 @@ class DynamoDBLock(DynamoDBLockBaseForDynamoDB):
         
         debug (bool, default=False): 
             If True, enables verbose debug output, including internal decisions and retries.
+            
+        log_common_prefix (str, default=None):
+            A text prefix to appear in the cloudwatch logs to identify each execution when using verbose or debug modes. Sugestion: `context.aws_request_id[:8]`
 
     Usage:
     
