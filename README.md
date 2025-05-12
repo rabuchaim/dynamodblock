@@ -252,7 +252,7 @@ The library defines specific exceptions:
 
 ## `create_dynamodb_table`
 
-Creates a DynamoDB table intended to store locks, with flexible customization options. **This function does not handle credentials or access keys, you need to provide an already instantiated boto3.client with your credentials data.**.
+Creates a DynamoDB table intended to store locks, with flexible customization options. **This function does not handle credentials or access keys, you need to provide an already instantiated boto3.client with your credentials data.**
 
 This function simplifies the creation of a DynamoDB table by predefining key parameters, but also supports several
 optional configurations via keyword arguments. The default behavior is to create a table with:
