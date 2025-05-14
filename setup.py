@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 setup(
     name='dynamodblock',
-    version='1.0.4',
+    version='1.0.5',
     description="DynamoDB Lock for AWS Lambdas is a pure Python lib that implements a distributed locking mechanism using DynamoDB. It's designed for scenarios where multiple concurrent Lambda executions need to ensure that certain tasks are performed exclusively by a single instance. Supports configurable TTL, retry logic with backoff, customizable timeouts and timezone.",
     url='https://github.com/rabuchaim/dynamodblock',
     author='Ricardo Abuchaim',
