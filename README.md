@@ -275,13 +275,14 @@ Deleted lock: {'lock_id': 'mylock3', 'ttl': Decimal('1747212565'), 'ttl_precise'
 
 The library defines specific exceptions:
 
-- `LambdaLockException`
-- `LambdaLockTimeoutError`
-- `LambdaLockWarmUpException`
-- `LambdaLockAcquireException`
-- `LambdaLockReleaseException`
-- `LambdaLockGetLockException`
-- `LambdaLockPutLockException`
+- `DynamoDBLockException`
+- `DynamoDBLockTimeoutError`
+- `DynamoDBLockWarmUpException`
+- `DynamoDBLockAcquireException`
+- `DynamoDBLockReleaseException`
+- `DynamoDBLockGetLockException`
+- `DynamoDBLockCheckLockException`
+- `DynamoDBLockPutLockException`
 
 ---
 
