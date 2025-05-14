@@ -267,7 +267,7 @@ Deleted lock: {'lock_id': 'mylock3', 'ttl': Decimal('1747212565'), 'ttl_precise'
 | `timezone`                | `str`         | Timezone, e.g. `UTC`, `America/Sao_Paulo`        |
 | `verbose`                 | `bool`        | Enable logs                                      |
 | `debug`                   | `bool`        | Enable debug logs                                |
-| `log_common_prefix`       | `str`         | A text to be used as prefix in verbose or debug  |
+| `log_prefix`              | `str`         | A text to be used as prefix in verbose or debug  |
 
 ---
 
@@ -397,6 +397,8 @@ def slow_task():
 {
   "lock_id": "my-task-lock",
   "ttl": 1715384400,
+  "ttl_precise": 1715384400.234555,
+  "lock_region": "us-east-1",
   "owner_id": "abc123"
 }
 ```
