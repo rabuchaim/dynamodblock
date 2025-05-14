@@ -1,8 +1,9 @@
-# DynamoDB Lock for AWS Lambda
+# DynamoDB Lock for AWS Lambda v1.0.5
 
-`dynamodblock` is a pure Python library that implements a *distributed lock* mechanism for AWS Lambda using DynamoDB as the backend. It's useful for ensuring exclusive execution in concurrent tasks, preventing collisions in simultaneous executions.
+`dynamodblock` is a pure Python library that implements a *distributed blocking* mechanism for AWS Lambda using DynamoDB as a backend. It is useful for ensuring exclusive execution of concurrent tasks, avoiding collisions in concurrent executions, and has millisecond accuracy.
 
 The library supports configurable TTL, retry logic with backoff, customizable timeouts, and operates in the time zone of your choice. It also integrates seamlessly with CloudWatch, enabling detailed logging for monitoring and debugging.
+
 
 > **This library does not handle AWS credentials or access keys, you need to provide an already instantiated boto3.resource("dynamodb").Table("your_lock_table_name") with your credentials data**
 
@@ -104,7 +105,7 @@ def lambda_handler(event, context):
     ddb_table = boto3.resource('dynamodb').Table('ddblock')
     
     lock = DynamoDBLock(lock_id='mylock',dynamodb_table_resource=ddb_table,owner_id=context.aws_request_id[:8],lock_ttl=20,warmup=True,
-                        verbose=True,debug=True,log_common_prefix=context.aws_request_id[:8],timezone="America/Sao_Paulo")
+                        verbose=True,debug=True,log_prefix=f"[{context.aws_request_id[:8]}] ",timezone="America/Sao_Paulo")
     
     with lock.acquire():
         log.info(f"Sleeping for 5 seconds")
@@ -128,12 +129,12 @@ And below is a screenshot of CloudWatch logs from two concurrent executions (usi
 ## 📑 Other methods
 
 ```def get_lock_info(self)->namedtuple```
-    Return a namedtuple LockInfo with the lock information.
+    Returns a named LockInfo with the lock information. **TTL is used by DynamoDB to expire records, and TTL_PRECISE is used by DynamoDBLock to ensure the accuracy of the lock written to the millisecond**.
 
 ```python
 >>> my_lock_info = lock.get_lock_info()
 >>> print(my_lock_info) 
->>> LockInfo(lock_id='mylock1', lock_region='us-east-1', ttl=1746956664, expire_datetime=datetime.datetime(2025, 5, 11, 4, 44, 24), expire_datestring='2025-05-11 04:44:24 -05', owner_id='88d6235e', return_code=200, return_message='OK', elapsed_time=0.144738)`
+>>> LockInfo(lock_id='mylock1', lock_region='us-east-1', ttl=Decimal('1747211435'), ttl_precise=Decimal('1747211435.0648081'), expire_datetime=datetime.datetime(2025, 5, 14, 5, 30, 35, 64808), expire_datestring='2025-05-14 05:30:35.064808 -03', owner_id='28baf959', return_code=200, return_message='OK', elapsed_time=0.163222)
 >>> print(my_lock_info.lock_id) 
 >>> 'mylock1'
 >>> print(my_lock_info.owner_id) 
@@ -205,6 +206,42 @@ And below is a screenshot of CloudWatch logs from two concurrent executions (usi
 >>> True
 ```
 
+```def get_all_locks(self,order_by:Optional[Literal['lock_id','ttl','ttl_precise','owner_id']]='ttl_precise',reverse:bool=False)->List[dict]:```
+    Lists all locks found in the given DynamoDB resource table. Has the option to sort by main fields (`'lock_id','ttl','ttl_precise','owner_id'`). The data is returned as a generator.
+
+```python
+>>> for item in lock.get_all_locks(order_by='ttl_precise'):
+...   print(item)
+25/05/14 05:31:02.962 [DEBUG] Started to scan all locks
+{'lock_id': 'mylock1', 'ttl': Decimal('1747211471'), 'ttl_precise': Decimal('1747211471.9021206'), 'lock_region': 'us-east-1', 'owner_id': 'f32dbbf6', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 31, 11, 902121), 'expire_datestring': '2025-05-14 05:31:11.902121 -03'}
+{'lock_id': 'mylock2', 'ttl': Decimal('1747211472'), 'ttl_precise': Decimal('1747211472.5237079'), 'lock_region': 'us-east-1', 'owner_id': '7b35d1ed', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 31, 12, 523708), 'expire_datestring': '2025-05-14 05:31:12.523708 -03'}
+{'lock_id': 'mylock3', 'ttl': Decimal('1747211472'), 'ttl_precise': Decimal('1747211472.8167684'), 'lock_region': 'us-east-1', 'owner_id': 'f2eaeb34', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 31, 12, 816768), 'expire_datestring': '2025-05-14 05:31:12.816768 -03'}
+25/05/14 05:31:03.107 [DEBUG] Scan all locks finished! [0.145813 sec]
+```
+To return all the data in a list at once, call the function with the List type, otherwise it will be delivered item by item like a generator.
+```python
+>>> all_locks = list(lock.get_all_locks(order_by=None)):
+>>> print(all_locks)
+[{'lock_id': 'mylock3', 'ttl': Decimal('1747212155'), 'ttl_precise': Decimal('1747212155.1342103'), 'lock_region': 'us-east-1', 'owner_id': '15d67fc3', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 42, 35, 134210), 'expire_datestring': '2025-05-14 05:42:35.134210 -03'}, {'lock_id': 'mylock1', 'ttl': Decimal('1747212154'), 'ttl_precise': Decimal('1747212154.1937928'), 'lock_region': 'us-east-1', 'owner_id': '8734726c', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 42, 34, 193793), 'expire_datestring': '2025-05-14 05:42:34.193793 -03'}, {'lock_id': 'mylock2', 'ttl': Decimal('1747212154'), 'ttl_precise': Decimal('1747212154.8239918'), 'lock_region': 'us-east-1', 'owner_id': '72de54c8', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 42, 34, 823992), 'expire_datestring': '2025-05-14 05:42:34.823992 -03'}]
+```
+
+```def release_all_locks(self)->List[dict]:```
+    Delete all locks in the current DynamoDB table and return a list of dict with all released locks as generator.
+
+```python
+>>> for released_lock in lock.release_all_locks():
+...   print(f"Deleted lock: {deleted_lock}")
+25/05/14 05:50:00.608 [DEBUG] Started to release all locks
+25/05/14 05:50:00.608 [DEBUG] Started to scan all locks
+25/05/14 05:50:00.911 [DEBUG] Successfully released lock 'mylock1', ttl:1747212564, ttl_precise:1747212564.6625602, expire_datestring:2025-05-14 05:49:24.662560 -03, lock_region: us-east-1, owner_id:bd507158 [0.138907 sec]
+Deleted lock: {'lock_id': 'mylock1', 'ttl': Decimal('1747212564'), 'ttl_precise': Decimal('1747212564.6625602'), 'lock_region': 'us-east-1', 'owner_id': 'bd507158', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 49, 24, 662560), 'expire_datestring': '2025-05-14 05:49:24.662560 -03'}
+25/05/14 05:50:01.048 [DEBUG] Successfully released lock 'mylock2', ttl:1747212565, ttl_precise:1747212565.2897048, expire_datestring:2025-05-14 05:49:25.289705 -03, lock_region: us-east-1, owner_id:dafa8060 [0.136913 sec]
+Deleted lock: {'lock_id': 'mylock2', 'ttl': Decimal('1747212565'), 'ttl_precise': Decimal('1747212565.2897048'), 'lock_region': 'us-east-1', 'owner_id': 'dafa8060', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 49, 25, 289705), 'expire_datestring': '2025-05-14 05:49:25.289705 -03'}
+25/05/14 05:50:01.183 [DEBUG] Successfully released lock 'mylock3', ttl:1747212565, ttl_precise:1747212565.622608, expire_datestring:2025-05-14 05:49:25.622608 -03, lock_region: us-east-1, owner_id:e13c4c22 [0.135249 sec]
+Deleted lock: {'lock_id': 'mylock3', 'ttl': Decimal('1747212565'), 'ttl_precise': Decimal('1747212565.622608'), 'lock_region': 'us-east-1', 'owner_id': 'e13c4c22', 'expire_datetime': datetime.datetime(2025, 5, 14, 5, 49, 25, 622608), 'expire_datestring': '2025-05-14 05:49:25.622608 -03'}
+25/05/14 05:50:01.183 [DEBUG] Scan all locks finished! [0.575000 sec]
+25/05/14 05:50:01.183 [DEBUG] Released 3 lock(s) from a total of 3 lock(s) [0.575048 sec]
+```
 
 ---
 
