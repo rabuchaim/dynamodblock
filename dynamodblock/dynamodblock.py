@@ -10,10 +10,11 @@ import json
 import functools
 import re
 from uuid import uuid4
+from decimal import Decimal
 from typing import Literal, Optional, List
 from collections import namedtuple
-from abc import ABC, abstractmethod
-from threading import Lock
+from abc import ABC, abstractmethod         # pylint: disable=no-name-in-module
+from threading import Lock, Thread
 from datetime import datetime as dt, timedelta
 from boto3.dynamodb.conditions import Attr, Or, Key
 from boto3.dynamodb.table import TableResource as DynamoDBTableResource
@@ -41,13 +42,13 @@ Author.: Ricardo Abuchaim - ricardoabuchaim@gmail.com
 Github.: http://github.com/rabuchaim/dynamodblock
 Issues.: https://github.com/rabuchaim/dynamodblock/issues
 PyPI...: https://pypi.org/project/dynamodblock/  ( pip install dynamodblock )
-Version: 1.0.4 - Release Date: 11/May/2025
+Version: 1.0.5 - Release Date: 14/May/2025
 License: MIT
 
 """
-__appname__ = "DynamoDB Lock for Lambdas"
-__version__ = "1.0.4"
-__release__ = "11/May/2025"
+__appname__ = "DynamoDBLock"
+__version__ = "1.0.5"
+__release__ = "14/May/2025"
 
 __all__ = ['DynamoDBLock','create_dynamodb_table',
            'DynamoDBLockException','DynamoDBLockTimeoutError','DynamoDBLockWarmUpException','DynamoDBLockAcquireException',
@@ -66,6 +67,8 @@ class DynamoDBLockReleaseException(Exception): # Raised when the lock release me
     pass
 class DynamoDBLockGetLockException(Exception): # Raised when the lock get method fails.
     pass
+class DynamoDBLockCheckLockException(Exception): # Raised when the lock check lock method fails.
+    pass
 class DynamoDBLockPutLockException(Exception): # Raised when the lock put method fails.
     pass
 
@@ -81,7 +84,7 @@ class ElapsedTimer:
         self.time = None
     def __enter__(self):
         return self
-    def __exit__(self,type,value,traceback):
+    def __exit__(self,_type,value,traceback):
         self.time = time.monotonic() - self.start
     def time_as_float(self,decimal_places:int=6)->float:
         return math.trunc((time.monotonic()-self.start)*(10**decimal_places))/(10**decimal_places)
@@ -160,7 +163,7 @@ class DynamoDBLockLogging():
         print(f"{self.common_prefix}{self.__get_date()}{prefix if prefix is not None else self.info_prefix}{msg}",flush=True)
     def debug(self,msg,prefix:str=None)->None:              # pylint: disable=method-hidden
         print(f"{self.common_prefix}{self.__get_date()}{prefix if prefix is not None else self.debug_prefix}{msg}",flush=True)
-    def __logEmpty(self,msg:str="",prefix:str="")->None:... # pylint: disable=method-hidden,multiple-statements
+    def __logEmpty(self,msg:str="",prefix:str="")->None:... # pylint: disable=method-hidden,multiple-statements,invalid-name
     def __get_date(self):
         if not self.__with_date:
             return ''
@@ -193,13 +196,13 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
         except Exception as ERR:
             raise DynamoDBLockException(f"Could not get the region of provided dynamodb_table_resource. {str(ERR)}") from None
 
-        self.LockInfo = namedtuple("LockInfo", ["lock_id", "lock_region", "ttl", "expire_datetime", "expire_datestring", "owner_id", "return_code", "return_message", "elapsed_time"], defaults=[None,None,None,None,None,None,None,None,None])
+        self.LockInfo = namedtuple("LockInfo", ["lock_id", "lock_region", "ttl", "ttl_precise", "expire_datetime", "expire_datestring", "owner_id", "return_code", "return_message", "elapsed_time"], defaults=[None,None,None,None,None,None,None,None,None,None])
 
         self.__debug = debug
         self.__verbose = verbose
-        self.__classLogging = DynamoDBLockLogging(verbose=self.__verbose,debug=self.__debug,common_prefix=log_prefix)
-        self.logDebug = self.__classLogging.debug
-        self.logInfo = self.__classLogging.info
+        self.__class_logging = DynamoDBLockLogging(verbose=self.__verbose,debug=self.__debug,common_prefix=log_prefix)
+        self.logDebug = self.__class_logging.debug
+        self.logInfo = self.__class_logging.info
 
         self._threadsafe_put_lock:Lock = Lock()
         self._threadsafe_delete_lock:Lock = Lock()
@@ -217,7 +220,7 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
             raise ValueError("retry_interval must be less or equal than retry_timeout") from None
 
         with ElapsedTimer() as elapsed_initial:
-            self.logInfo(f"Initializing {self.__class__.__name__}...")
+            self.logInfo(f"Initializing {self.__class__.__name__} ({__appname__} v{__version__})...")
             ##──── call set_timezone() only if the given timezone is different from the environment variable TZ ──────────────────────────────
             self.__current_timezone = os.environ.get("TZ",None) # pylint: disable=no-member
             if (timezone is not None) and (timezone != self.__current_timezone):
@@ -229,8 +232,7 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
             ##──── Call the warmup() method to check if the table is available and working. ──────────────────────────────────────────────────
             if warmup:
                 try:
-                    if not self.warmup():
-                        raise
+                    self.warmup()
                 except Exception as ERR:
                     raise DynamoDBLockWarmUpException(f"{str(ERR)}. Check your access to AWS and the resources and try again.") from None
             else:
@@ -283,7 +285,7 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
         try:
             with ElapsedTimer() as elapsed1:
                 self.ddb_table.put_item(Item={"lock_id": warmup_lock_id, "ttl": warmup_lock_ttl})
-                self.logDebug(f"Warm-Up put_item '{warmup_lock_id}' (ttl {warmup_lock_ttl}) on table '{self.ddb_table.name}' in {elapsed1.text(with_brackets=False)}.")
+                self.logDebug(f"Warm-up put_item '{warmup_lock_id}' (ttl {warmup_lock_ttl}) on table '{self.ddb_table.name}' in {elapsed1.text(with_brackets=False)}.")
         except Exception as ERR:
             raise DynamoDBLockWarmUpException(f"Failed at warm-up put_items! {str(ERR)}") from None
         try:
@@ -291,7 +293,7 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
                 response = self.ddb_table.query(KeyConditionExpression=Key("lock_id").eq(warmup_lock_id),Limit=1).get("Items",[])
                 response = {k: v for d in response for k, v in d.items()}
                 if response != [] and response.get('ttl',0) == warmup_lock_ttl:
-                    self.logDebug(f"Warm-Up query on table '{self.ddb_table.name}' in {elapsed2.text(with_brackets=False)}.")
+                    self.logDebug(f"Warm-up query on table '{self.ddb_table.name}' in {elapsed2.text(with_brackets=False)}.")
                 else:
                     raise Exception("Error in query response")
         except Exception as ERR:
@@ -299,8 +301,8 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
         try:
             with ElapsedTimer() as elapsed3:
                 self.ddb_table.delete_item(Key={"lock_id":warmup_lock_id})
-                self.logDebug(f"Warm-Up delete_item on table '{self.ddb_table.name}' in {elapsed3.text(with_brackets=False)}.")
-                self.logInfo(f"Warm-Up finished in {elapsed1.text(with_brackets=False)}.")
+                self.logDebug(f"Warm-up delete_item on table '{self.ddb_table.name}' in {elapsed3.text(with_brackets=False)}.")
+                self.logInfo(f"Warm-up finished in {elapsed1.text(with_brackets=False)}.")
         except Exception as ERR:
             raise DynamoDBLockWarmUpException(f"Failed at warm-up delete_items! {str(ERR)}") from None
         return True
@@ -331,8 +333,8 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
     def _release(self)->None:
         raise NotImplementedError
 
-    def release(self,force:bool=False, raise_on_exception:bool=False)->bool:
-        return self.__delete_lock(force=force, raise_on_exception=raise_on_exception)
+    def release(self,force:bool=False,raise_on_exception:bool=False)->bool:
+        return self.__delete_lock(force=force,raise_on_exception=raise_on_exception)
 
     def acquire(self, force:bool=False, lock_ttl:int|None=None, retry_timeout:int|None=None, retry_interval:float|None=None)->DynamoDBLockAcquireReturnProxy:
         """Acquire the lock. If the lock is already acquired by another process, it will wait until the lock is released or the retry_timeout is reached.
@@ -346,14 +348,14 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
         try:
             if force:
                 try:
-                    if self.__put_lock(force, lock_ttl):
+                    if self.__put_lock(lock_ttl,force=True):
                         return DynamoDBLockAcquireReturnProxy(lock=self)
                 except Exception as ERR:
                     raise DynamoDBLockAcquireException(f"Failed to force acquire() {str(ERR)}") from None
             while True:
                 with ElapsedTimer() as elapsed:
                     if not self.is_locked:
-                        if self.__put_lock(force, lock_ttl):
+                        if self.__put_lock(lock_ttl,force=False):
                             return DynamoDBLockAcquireReturnProxy(lock=self)
                     self.logDebug(f"Lock '{self.lock_id}' is already acquired by another process. Waiting {retry_interval} seconds to try again... {elapsed.text()}")
                     time.sleep(retry_interval)
@@ -365,21 +367,23 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
         except Exception as ERR:
             raise DynamoDBLockAcquireException(str(ERR)) from None
 
-    def __put_lock(self,force:bool=False,lock_ttl:int|None=None)->bool:
+    def __put_lock(self,lock_ttl:int,force:bool=False)->bool:
         """Put the lock in the DynamoDB table. If the lock is already acquired by another process, it will return False."""
         try:
             with ElapsedTimer() as elapsed:
-                lock_ttl = lock_ttl if lock_ttl is not None else self.lock_ttl
+                self.__lock_ttl = (time.time() + lock_ttl)
                 if force:
-                    response = self.ddb_table.put_item(Item={"lock_id": self.lock_id, "lock_region": self.__lock_region, "ttl": int(time.time()) + lock_ttl, "owner_id": self.get_owner_id()})
+                    response = self.ddb_table.put_item(Item={"lock_id": self.lock_id, "lock_region": self.__lock_region,
+                                                             "ttl": int(self.__lock_ttl), "ttl_precise": Decimal(str(self.__lock_ttl)),
+                                                             "owner_id": self.get_owner_id()})
                 else:
                     with self._threadsafe_put_lock:
-                        self.__lock_ttl = int(time.time()) + lock_ttl
                         response = self.ddb_table.put_item(Item={"lock_id": self.lock_id,
                                                                  "lock_region": self.__lock_region,
-                                                                 "ttl": self.__lock_ttl,
+                                                                 "ttl": int(self.__lock_ttl),
+                                                                 "ttl_precise": Decimal(str(self.__lock_ttl)),
                                                                  "owner_id": self.get_owner_id()},
-                                                           ConditionExpression=Or(Attr("lock_id").not_exists(),Attr("ttl").lt(int(time.time()))))
+                                                           ConditionExpression=Or(Attr("lock_id").not_exists(),Attr("ttl_precise").lt(Decimal(str(time.time())))))
                 if result := (response.get("ResponseMetadata",{}).get("HTTPStatusCode",0) == 200):
                     self.logDebug(f"Lock '{self.lock_id}' successfully acquired {'by force ' if force else ''}{elapsed.text()}")
                 return result
@@ -392,12 +396,13 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
             try:
                 item_lock = self.ddb_table.query(KeyConditionExpression=Key("lock_id").eq(self.lock_id),Limit=1).get("Items",[])
                 if item_lock != []:
-                    ttl_datetime = dt.fromtimestamp(int(item_lock[0].get("ttl",0)))
+                    ttl_datetime = dt.fromtimestamp(float(item_lock[0].get("ttl_precise",0)))
                     return self.LockInfo(lock_id=self.lock_id,
                                          lock_region=item_lock[0].get("lock_region",""),
-                                         ttl=int(item_lock[0].get("ttl",0)),
+                                         ttl=item_lock[0].get("ttl",0),
+                                         ttl_precise=item_lock[0].get("ttl_precise",0),
                                          expire_datetime=ttl_datetime,
-                                         expire_datestring=ttl_datetime.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z"),
+                                         expire_datestring=ttl_datetime.astimezone().strftime("%Y-%m-%d %H:%M:%S.%f %Z"),
                                          owner_id=item_lock[0].get("owner_id",""),
                                          return_code=200,
                                          return_message="OK",
@@ -409,22 +414,38 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
 
     def __check_lock(self)->bool:
         """Get the lock information from the DynamoDB table. If the lock is acquired by another process, it will return True."""
-        try:
-            item_lock = self.ddb_table.query(KeyConditionExpression=Key("lock_id").eq(self.lock_id),Limit=1).get("Items",[])
-            if item_lock != []:
-                ##──── Get the existence of the lock and check if it is expired
-                if int(item_lock[0].get("ttl",0)) > time.time():
-                    return True
-                ##──── the lock should be expired, so we can delete it by force and ignore if it fails
-                try:
-                    self.ddb_table.delete_item(Key={"lock_id": self.lock_id})
-                except Exception as ERR:
-                    self.logDebug(f"Exception when deleting a expired lock {str(ERR)}")
-            return False
-        except Exception as ERR:
-            raise DynamoDBLockGetLockException(str(ERR)) from None
+        with ElapsedTimer() as elapsed:
+            try:
+                item_lock = self.ddb_table.query(KeyConditionExpression=Key("lock_id").eq(self.lock_id),Limit=1).get("Items",[])
+                if item_lock != []:
+                    ##──── Get the existence of the lock and check if it is expired
+                    if float(item_lock[0].get("ttl_precise",0)) > time.time():
+                        return True
+                    ##──── the lock should be expired, so we can delete it by force and ignore if it fails
+                    try:
+                        Thread(target=self.__delete_expired_lock,args=(int(item_lock[0].get("ttl",0)),float(item_lock[0].get("ttl_precise",0)),),daemon=True).start()
+                    except Exception as ERR:
+                        self.logDebug(f"Exception when deleting an expired lock in check lock method: {str(ERR)} {elapsed.text()}")
+                return False
+            except Exception as ERR:
+                raise DynamoDBLockCheckLockException(str(ERR)) from None
+            # finally:
+            #     self.logDebug(f"CheckLock total time: {elapsed.text()}")
+
+    def __delete_expired_lock(self,ttl,ttl_precise):
+        """Internal: tries to delete expired lock, silently ignores exceptions."""
+        with ElapsedTimer() as elapsed:
+            try:
+                # Since this function was started by a thread, there may be cases where the lock has already been overwritten milliseconds before the deletion occurs.
+                # ensures that deletion will only occur if the lock still exists with the expected ttl as it may have already been overwritten
+                self.ddb_table.delete_item(Key={"lock_id":self.lock_id},ConditionExpression=Attr("ttl").eq(Decimal(ttl)))
+                expire_datestring = dt.fromtimestamp(ttl_precise).astimezone().strftime("%Y-%m-%d %H:%M:%S.%f %Z")
+                self.logDebug(f"Expired lock '{self.lock_id}' ({expire_datestring}) successfully deleted {elapsed.text()}")
+            except Exception:
+                self.logDebug(f"Failed to delete expired lock '{self.lock_id}' because it was already acquired (overwritten) {elapsed.text()}")
 
     def __delete_lock(self,force:bool=False, raise_on_exception:bool=False)->bool:
+        """Delete a specified lock"""
         with ElapsedTimer() as elapsed:
             with self._threadsafe_delete_lock:
                 try:
@@ -434,11 +455,15 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
                         else:
                             # o bloqueio deve existir e o owner_id deve ser o mesmo que o owner_id atual, e o ttl e a lock_region
                             info = self.get_lock_info()
-                            if (info.lock_id,info.lock_region,info.ttl,info.owner_id) == (self.lock_id,self.__lock_region,self.__lock_ttl,self.__owner_id):
+                            if (info.lock_id,info.lock_region,info.ttl_precise,info.owner_id) == (self.lock_id,self.__lock_region,Decimal(str(self.__lock_ttl)),self.__owner_id):
                                 # yes, this lock belongs to me, so I will delete it
                                 response = self.ddb_table.delete_item(Key={"lock_id": self.lock_id},ConditionExpression=Attr("lock_id").eq(self.lock_id))
                             else:
-                                self.logDebug(f"The current lock does not belong to this session... lock release aborted ({info})")
+                                error_message = f"The current lock does not belong to this session... lock release aborted. ({info})"
+                                self.logDebug(error_message)
+                                if not raise_on_exception:
+                                    return False
+                                raise DynamoDBLockReleaseException(error_message) from None
                         if response.get("ResponseMetadata",{}).get("HTTPStatusCode",0) == 200:
                             self.__should_delete_lock = False
                             self.logDebug(f"Lock '{self.lock_id}' successfully released{' by force' if force else ''} {elapsed.text()}")
@@ -449,28 +474,31 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
                     raise DynamoDBLockReleaseException(str(ERR)) from None
         return False
 
-    def get_all_locks(self,order_by:Optional[Literal['lock_id','ttl','owner_id']]=None,reverse:bool=False)->List[dict]:
+    def get_all_locks(self,order_by:Optional[Literal['lock_id','ttl','ttl_precise','owner_id']]='ttl_precise',reverse:bool=False)->List[dict]:
         """Return a list of dict with all locks in the current DynamoDB table."""
         with ElapsedTimer() as elapsed:
             try:
                 self.logDebug("Started to scan all locks")
                 items = self.ddb_table.scan().get("Items",[])
                 new_items = []
+                if order_by is not None:
+                    items = sorted(items, key=lambda x: x[order_by],reverse=reverse)
                 for item in items:
                     try:
-                        ttl_datetime = dt.fromtimestamp(int(item.get("ttl",0)))
-                        new_items.append({'lock_id':item.get("lock_id"),
+                        ttl_datetime = dt.fromtimestamp(float(item.get("ttl_precise",0)))
+                        new_item = {'lock_id':item.get("lock_id"),
                                     'ttl':item.get('ttl'),
+                                    'ttl_precise':item.get('ttl_precise'),
                                     'lock_region':item.get("lock_region"),
                                     'owner_id':item.get("owner_id"),
                                     'expire_datetime':ttl_datetime,
-                                    'expire_datestring':ttl_datetime.astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
-                                    })
+                                    'expire_datestring':ttl_datetime.astimezone().strftime("%Y-%m-%d %H:%M:%S.%f %Z")
+                                    }
+                        new_items.append(new_item)
+                        yield new_item
                     except Exception as ERR:
                         self.logDebug(f"Failed to prepare item {json.dumps(item,separators=(',',':'),sort_keys=False,default=str)}: {str(ERR)}")
                         continue
-                if order_by is not None:
-                    new_items = sorted(new_items, key=lambda x: x[order_by],reverse=reverse)
                 return new_items
             except Exception as ERR:
                 self.logDebug(f"Exception at get_all_locks(): {str(ERR)}")
@@ -478,31 +506,31 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
             finally:
                 self.logDebug(f"Scan all locks finished! {elapsed.text()}")
 
-    def release_all_locks(self)->List[str]:
-        """Delete all locks in the current DynamoDB table and return a list with the lock_id of all released locks"""
+    def release_all_locks(self)->List[dict]:
+        """Delete all locks in the current DynamoDB table and return a list of dict with all released locks as generator."""
         with ElapsedTimer() as elapsed:
             try:
-                return_success = []
                 self.logDebug("Started to release all locks")
-                items = self.ddb_table.scan().get("Items",[])
-                release_counter = 0
-                for item in items:
+                released_counter, total_counter = 0, 0
+                released_locks = []
+                for item in self.get_all_locks(order_by='ttl_precise'):
+                    total_counter += 1
                     with ElapsedTimer() as elapsed_item:
                         item_dumps = {json.dumps(item,separators=(',',':'),sort_keys=False,default=str)}
                         try:
-                            ttl_datetime = dt.fromtimestamp(int(item.get("ttl",0)))
                             response = self.ddb_table.delete_item(Key={"lock_id":item.get("lock_id","")},ConditionExpression=Attr("lock_id").eq(item.get("lock_id","")))
                             if response.get("ResponseMetadata",{}).get("HTTPStatusCode",0) != 200:
                                 self.logDebug(f"Failed to release lock {item_dumps} - response: {json.dumps(response,separators=(',',':'),sort_keys=False,default=str)} {elapsed_item.text()}")
                                 continue
-                            release_counter += 1
-                            return_success.append(item['lock_id'])
-                            self.logDebug(f"Successfully released lock '{item['lock_id']}' (ttl:{item['ttl']} ({ttl_datetime.astimezone().strftime('%Y-%m-%d %H:%M:%S %Z')}), lock_region: {item['lock_region']}, owner_id:{item['owner_id']}) {elapsed_item.text()}")
+                            released_counter += 1
+                            released_locks.append(item)
+                            self.logDebug(f"Successfully released lock '{item['lock_id']}', ttl:{item['ttl']}, ttl_precise:{item['ttl_precise']}, expire_datestring:{item['expire_datestring']}, lock_region: {item['lock_region']}, owner_id:{item['owner_id']} {elapsed_item.text()}")
+                            yield item
                         except Exception as ERR:
                             self.logDebug(f"Exception when releasing lock {item_dumps}: {str(ERR)} {elapsed_item.text()}")
                             continue
-                self.logDebug(f"Released {release_counter} lock(s) from a total of {len(items)} lock(s) {elapsed.text()}")
-                return return_success
+                self.logDebug(f"Released {released_counter} lock(s) from a total of {total_counter} lock(s) {elapsed.text()}")
+                return released_locks
             except Exception as ERR:
                 self.logDebug(f"Exception at release_all_locks: {str(ERR)} {elapsed.text()}")
                 return []
@@ -656,11 +684,11 @@ def create_dynamodb_table(table_name:str,boto3_client:BaseClient,verbose:bool=Tr
     """
     def __log_verbose(msg):
         print(str(msg),flush=True)
-    def __log_verbose_empty(msg):...                # pylint: disable=multiple-statements
+    def __log_verbose_empty(msg):...                # pylint: disable=multiple-statements,unused-argument
 
     def __raise_exception(exception):
         raise exception from None
-    def __raise_exception_empty(exception):...      # pylint: disable=multiple-statements
+    def __raise_exception_empty(exception):...      # pylint: disable=multiple-statements,unused-argument
 
     if not verbose:
         __log_verbose.__code__ = __log_verbose_empty.__code__
