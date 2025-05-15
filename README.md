@@ -1,4 +1,4 @@
-# DynamoDB Lock for AWS Lambda v1.0.5
+# DynamoDB Lock for AWS Lambda v1.0.6
 
 `dynamodblock` is a pure Python library that implements a *distributed blocking* mechanism for AWS Lambda using DynamoDB as a backend. It is useful for ensuring exclusive execution of concurrent tasks, avoiding collisions in concurrent executions, and has millisecond accuracy.
 
@@ -6,6 +6,12 @@ The library supports configurable TTL, retry logic with backoff, customizable ti
 
 
 > **This library does not handle AWS credentials or access keys, you need to provide an already instantiated boto3.resource("dynamodb").Table("your_lock_table_name") with your credentials data**
+
+```
+What's new in v1.0.6 - 14/May/2025
+- Up until version 1.0.5, the release_all_locks() function returned a generator. Starting with version 1.0.6, you can simply call lock.release_all_locks() without any issues.
+- The get_all_locks() function continues to return as a generator, that is, to get all the items at once you need to call it as list(lock.get_all_locks()).
+```
 
 Here we have 2 sessions with timezones 2 hours apart, competing for a lock with executions 1 second after each other. The lock has 10 seconds of retries with a 1 second interval between each attempt. If the initial lock remained active for 5 seconds, the subsequent lock will be able to perform acquire() before the 10 second timeout.
 
@@ -18,6 +24,7 @@ Below we see a timezone change and a complete and successful execution.
 An another example of retrying to acquire the lock but ending unsuccessfully, with a timeout error that can be handled through DynamoBDLock exceptions.
 
 <img src="https://raw.githubusercontent.com/rabuchaim/dynamodblock/refs/heads/main/dynamodblock_03.png" />
+
 
 ---
 
@@ -226,9 +233,12 @@ To return all the data in a list at once, call the function with the List type, 
 ```
 
 ```def release_all_locks(self)->List[dict]:```
-    Delete all locks in the current DynamoDB table and return a list of dict with all released locks as generator.
+    Delete all locks in the current DynamoDB table and return a list of dict with all released locks. Up until version 1.0.5, the release_all_locks() function returned a generator. Starting with version 1.0.6, you can simply call lock.release_all_locks() without any issues.
 
 ```python
+>>> print(lock.release_all_locks())
+[{'lock_id': 'mylock1', 'ttl': Decimal('1747271472'), 'ttl_precise': Decimal('1747271472.042874'), 'lock_region': 'us-east-1', 'owner_id': '807d5f41', 'expire_datetime': datetime.datetime(2025, 5, 14, 22, 11, 12, 42874), 'expire_datestring': '2025-05-14 22:11:12.042874 -03'}]
+
 >>> for released_lock in lock.release_all_locks():
 ...   print(f"Deleted lock: {deleted_lock}")
 25/05/14 05:50:00.608 [DEBUG] Started to release all locks
