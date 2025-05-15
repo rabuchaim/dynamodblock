@@ -42,13 +42,13 @@ Author.: Ricardo Abuchaim - ricardoabuchaim@gmail.com
 Github.: http://github.com/rabuchaim/dynamodblock
 Issues.: https://github.com/rabuchaim/dynamodblock/issues
 PyPI...: https://pypi.org/project/dynamodblock/  ( pip install dynamodblock )
-Version: 1.0.5 - Release Date: 14/May/2025
+Version: 1.0.6 - Release Date: 15/May/2025
 License: MIT
 
 """
 __appname__ = "DynamoDBLock"
-__version__ = "1.0.5"
-__release__ = "14/May/2025"
+__version__ = "1.0.6"
+__release__ = "15/May/2025"
 
 __all__ = ['DynamoDBLock','create_dynamodb_table',
            'DynamoDBLockException','DynamoDBLockTimeoutError','DynamoDBLockWarmUpException','DynamoDBLockAcquireException',
@@ -170,7 +170,7 @@ class DynamoDBLockLogging():
         A = dt.now()
         if A.microsecond%1000>=500:
             A=A+timedelta(milliseconds=1)
-        D = A.strftime('%y/%m/%d %H:%M:%S.%f')[:-3]
+        D = A.strftime('%y/%m/%d %H:%M:%S.%f')
         return D+" "
 
 class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
@@ -417,6 +417,7 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
         with ElapsedTimer() as elapsed:
             try:
                 item_lock = self.ddb_table.query(KeyConditionExpression=Key("lock_id").eq(self.lock_id),Limit=1).get("Items",[])
+                # self.logDebug(f"check_lock: lock_id: {self.lock_id} item_lock_response: {item_lock}")
                 if item_lock != []:
                     ##──── Get the existence of the lock and check if it is expired
                     if float(item_lock[0].get("ttl_precise",0)) > time.time():
@@ -475,7 +476,18 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
         return False
 
     def get_all_locks(self,order_by:Optional[Literal['lock_id','ttl','ttl_precise','owner_id']]='ttl_precise',reverse:bool=False)->List[dict]:
-        """Return a list of dict with all locks in the current DynamoDB table."""
+        """Return a list of dict with all locks in the current DynamoDB table AS A GENERATOR
+        
+        Usage:
+        
+            for item in lock.get_all_locks():
+                print(item)
+                
+            OR
+            
+            print(list(lock.get_all_locks()))
+            
+        """
         with ElapsedTimer() as elapsed:
             try:
                 self.logDebug("Started to scan all locks")
@@ -507,7 +519,7 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
                 self.logDebug(f"Scan all locks finished! {elapsed.text()}")
 
     def release_all_locks(self)->List[dict]:
-        """Delete all locks in the current DynamoDB table and return a list of dict with all released locks as generator."""
+        """Delete all locks in the current DynamoDB table and return a list of dict with all released locks."""
         with ElapsedTimer() as elapsed:
             try:
                 self.logDebug("Started to release all locks")
@@ -525,7 +537,6 @@ class DynamoDBLockBaseClass(ABC, contextlib.ContextDecorator):
                             released_counter += 1
                             released_locks.append(item)
                             self.logDebug(f"Successfully released lock '{item['lock_id']}', ttl:{item['ttl']}, ttl_precise:{item['ttl_precise']}, expire_datestring:{item['expire_datestring']}, lock_region: {item['lock_region']}, owner_id:{item['owner_id']} {elapsed_item.text()}")
-                            yield item
                         except Exception as ERR:
                             self.logDebug(f"Exception when releasing lock {item_dumps}: {str(ERR)} {elapsed_item.text()}")
                             continue
@@ -924,3 +935,12 @@ def create_dynamodb_table(table_name:str,boto3_client:BaseClient,verbose:bool=Tr
                     print(f"> Failed at create_dynamodb_table ({table_name}): {str(ERR)} {elapsed.text()}")
                 return False
             raise Exception(str(ERR)) from None
+
+if __name__ == "__main__":
+    import boto3
+    os.environ['AWS_PROFILE'] = 'lab'
+    ddblocktable = boto3.resource("dynamodb",region_name='us-east-1').Table("ddblock")
+    lock1 = DynamoDBLock('mylock1',dynamodb_table_resource=ddblocktable,verbose=True,debug=True,timezone="America/Sao_Paulo")
+    with lock1.acquire():
+        # do something critical
+        time.sleep(1)
